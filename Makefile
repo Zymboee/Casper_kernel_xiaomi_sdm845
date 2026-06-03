@@ -413,16 +413,7 @@ KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs -pipe \
 		   -Wno-format-security \
 		   -Wno-unused-function\
 		   -ffast-math -mcpu=cortex-a55 -mtune=cortex-a55 \
-		   -std=gnu89 \
-		   -mllvm -polly \
-		   -mllvm -polly-run-dce \
-		   -mllvm -polly-run-inliner \
-		   -mllvm -polly-opt-fusion=max \
-		   -mllvm -polly-ast-use-context \
-		   -mllvm -polly-vectorizer=stripmine \
-		   -mllvm -polly-detect-keep-going \
-		   -mllvm -polly-invariant-load-hoisting
-
+		   -std=gnu89
 KBUILD_CPPFLAGS := -D__KERNEL__
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=
@@ -801,7 +792,6 @@ KBUILD_CFLAGS	+= -O3 -mtune=cortex-a55 -mcpu=cortex-a55+crc+crypto+fp16+simd+sve
 #KBUILD_CFLAGS	+= -floop-strip-mine -floop-block
 #KBUILD_CFLAGS	+= -floop-optimize -ftree-vectorize -ftracer
 LDFLAGS		+= -O3
-LDFLAGS += -fuse-ld=gold
 KBUILD_CFLAGS	+= $(call cc-option,-mabi=lp64)
 KBUILD_AFLAGS	+= $(call cc-option,-mabi=lp64)
 
@@ -809,10 +799,6 @@ KBUILD_AFLAGS	+= $(call cc-option,-mabi=lp64)
 # Some toolchains enable those fixes automatically, so opt-out.
 KBUILD_CFLAGS	+= $(call cc-option, -mno-fix-cortex-a53-835769)
 KBUILD_CFLAGS	+= $(call cc-option, -mno-fix-cortex-a53-843419)
-
-ifdef CONFIG_CC_WERROR
-KBUILD_CFLAGS	+= -Werror
-endif
 
 ifdef CONFIG_CC_WERROR
 KBUILD_CFLAGS	+= -Werror
