@@ -268,7 +268,7 @@ static void __tcp_ecn_check_ce(struct sock *sk, const struct sk_buff *skb)
 			tcp_enter_quickack_mode(sk, 2);
 		break;
 	case INET_ECN_CE:
-		if (tcp_ca_needs_ecn(sk))
+		if (tcp_ca_wants_ce_events(sk))
 			tcp_ca_event(sk, CA_EVENT_ECN_IS_CE);
 
 		if (!(tp->ecn_flags & TCP_ECN_DEMAND_CWR)) {
@@ -279,7 +279,7 @@ static void __tcp_ecn_check_ce(struct sock *sk, const struct sk_buff *skb)
 		tp->ecn_flags |= TCP_ECN_SEEN;
 		break;
 	default:
-		if (tcp_ca_needs_ecn(sk))
+		if (tcp_ca_wants_ce_events(sk))
 			tcp_ca_event(sk, CA_EVENT_ECN_NO_CE);
 		tp->ecn_flags |= TCP_ECN_SEEN;
 		break;
@@ -1328,6 +1328,12 @@ static bool tcp_shifted_skb(struct sock *sk, struct sk_buff *skb,
 	WARN_ON_ONCE(tcp_skb_pcount(skb) < pcount);
 	tcp_skb_pcount_add(skb, -pcount);
 
+	if (TCP_SKB_CB(skb)->tx.in_flight < pcount)
+		TCP_SKB_CB(skb)->tx.in_flight = 0;
+	else
+		TCP_SKB_CB(skb)->tx.in_flight -= pcount;
+	TCP_SKB_CB(prev)->tx.in_flight += pcount;
+
 	/* When we're adding to gso_segs == 1, gso_size will be zero,
 	 * in theory this shouldn't be necessary but as long as DSACK
 	 * code can come after this skb later on it's better to keep
@@ -1367,8 +1373,8 @@ static bool tcp_shifted_skb(struct sock *sk, struct sk_buff *skb,
 		tcp_advance_highest_sack(sk, skb);
 
 	tcp_skb_collapse_tstamp(prev, skb);
-	if (unlikely(TCP_SKB_CB(prev)->tx.delivered_mstamp.v64))
-		TCP_SKB_CB(prev)->tx.delivered_mstamp.v64 = 0;
+	if (unlikely(TCP_SKB_CB(prev)->tx.delivered_mstamp))
+		TCP_SKB_CB(prev)->tx.delivered_mstamp = 0;
 
 	tcp_unlink_write_queue(skb, sk);
 	sk_wmem_free_skb(sk, skb);
@@ -3581,7 +3587,8 @@ static void tcp_replace_ts_recent(struct tcp_sock *tp, u32 seq)
 /* This routine deals with acks during a TLP episode and ends an episode by
  * resetting tlp_high_seq. Ref: TLP algorithm in draft-ietf-tcpm-rack
  */
-static void tcp_process_tlp_ack(struct sock *sk, u32 ack, int flag)
+static void tcp_process_tlp_ack(struct sock *sk, u32 ack, int flag,
+				struct rate_sample *rs)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 
@@ -3608,6 +3615,11 @@ static void tcp_process_tlp_ack(struct sock *sk, u32 ack, int flag)
 			     FLAG_NOT_DUP | FLAG_DATA_SACKED))) {
 		/* Pure dupack: original and TLP probe arrived; no loss */
 		tp->tlp_high_seq = 0;
+	} else {
+		/* This ACK matches a TLP retransmit. We cannot yet tell if
+		 * this ACK is for the original or the TLP retransmit.
+		 */
+		rs->is_acking_tlp_retrans_seq = 1;
 	}
 }
 
@@ -3698,6 +3710,7 @@ static int tcp_ack(struct sock *sk, const struct sk_buff *skb, int flag)
 
 	prior_fackets = tp->fackets_out;
 	rs.prior_in_flight = tcp_packets_in_flight(tp);
+	tcp_rate_check_app_limited(sk);
 
 	/* ts_recent update must be made after we are sure that the packet
 	 * is in window.
@@ -3760,7 +3773,7 @@ static int tcp_ack(struct sock *sk, const struct sk_buff *skb, int flag)
 		tcp_fastretrans_alert(sk, acked, is_dupack, &flag, &rexmit);
 	}
 	if (tp->tlp_high_seq)
-		tcp_process_tlp_ack(sk, ack, flag);
+		tcp_process_tlp_ack(sk, ack, flag, &rs);
 
 	if ((flag & FLAG_FORWARD_PROGRESS) || !(flag & FLAG_NOT_DUP)) {
 		struct dst_entry *dst = __sk_dst_get(sk);
@@ -3772,6 +3785,8 @@ static int tcp_ack(struct sock *sk, const struct sk_buff *skb, int flag)
 		tcp_schedule_loss_probe(sk);
 	delivered = tp->delivered - delivered;	/* freshly ACKed or SACKed */
 	lost = tp->lost - lost;			/* freshly marked lost */
+	rs.is_ack_delayed = 0;
+	rs.is_ece = !!(flag & FLAG_ECE);
 	tcp_rate_gen(sk, delivered, lost, is_sack_reneg, &now, &rs);
 	tcp_cong_control(sk, ack, delivered, flag, &rs);
 	tcp_xmit_recovery(sk, rexmit);
@@ -3789,7 +3804,7 @@ no_queue:
 		tcp_ack_probe(sk);
 
 	if (tp->tlp_high_seq)
-		tcp_process_tlp_ack(sk, ack, flag);
+		tcp_process_tlp_ack(sk, ack, flag, &rs);
 	return 1;
 
 invalid_ack:
@@ -5209,10 +5224,11 @@ static void __tcp_ack_snd_check(struct sock *sk, int ofo_possible)
 	    /* More than one full frame received... */
 	if (((tp->rcv_nxt - tp->rcv_wup) > (inet_csk(sk)->icsk_ack.rcv_mss) *
 					sysctl_tcp_delack_seg &&
+	     (tp->fast_ack_mode == 1 ||
 	     /* ... and right edge of window advances far enough.
 	      * (tcp_recvmsg() will send ACK otherwise). Or...
 	      */
-	     __tcp_select_window(sk) >= tp->rcv_wnd) ||
+	     __tcp_select_window(sk) >= tp->rcv_wnd)) ||
 	    /* We ACK each frame or... */
 	    tcp_in_quickack_mode(sk) ||
 	    /* We have out of order data. */

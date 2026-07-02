@@ -2032,3 +2032,13 @@ static int __init pktsched_init(void)
 }
 
 subsys_initcall(pktsched_init);
+
+#ifdef CONFIG_DEFAULT_NET_SCH
+static int __init default_qdisc_init(void)
+{
+	if (strcmp(CONFIG_DEFAULT_NET_SCH, "pfifo_fast") != 0)
+		qdisc_set_default(CONFIG_DEFAULT_NET_SCH);
+	return 0;
+}
+late_initcall(default_qdisc_init);
+#endif

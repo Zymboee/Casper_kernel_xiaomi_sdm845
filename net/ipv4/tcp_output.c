@@ -385,7 +385,8 @@ static void tcp_ecn_send(struct sock *sk, struct sk_buff *skb,
 				th->cwr = 1;
 				skb_shinfo(skb)->gso_type |= SKB_GSO_TCP_ECN;
 			}
-		} else if (!tcp_ca_needs_ecn(sk)) {
+		} else if (!(tp->ecn_flags & TCP_ECN_ECT_PERMANENT) &&
+			   !tcp_ca_needs_ecn(sk)) {
 			/* ACK or retransmitted segment: clear ECT|CE */
 			INET_ECN_dontxmit(sk);
 		}
@@ -1253,6 +1254,13 @@ int tcp_fragment(struct sock *sk, struct sk_buff *skb, u32 len,
 	/* Fix up tso_factor for both original and new SKB.  */
 	tcp_set_skb_tso_segs(skb, mss_now);
 	tcp_set_skb_tso_segs(buff, mss_now);
+
+	{
+		int inflight_prev = TCP_SKB_CB(skb)->tx.in_flight - old_factor;
+		if (inflight_prev < 0) inflight_prev = 0;
+		TCP_SKB_CB(skb)->tx.in_flight = inflight_prev + tcp_skb_pcount(skb);
+		TCP_SKB_CB(buff)->tx.in_flight = inflight_prev + tcp_skb_pcount(buff);
+	}
 
 	/* Update delivered info for the new segment */
 	TCP_SKB_CB(buff)->tx = TCP_SKB_CB(skb)->tx;

@@ -2329,6 +2329,7 @@ int tcp_disconnect(struct sock *sk, int flags)
 	tp->snd_cwnd = 2;
 	icsk->icsk_probes_out = 0;
 	tp->packets_out = 0;
+	tp->fast_ack_mode = 0;
 	tp->snd_ssthresh = TCP_INFINITE_SSTHRESH;
 	tp->snd_cwnd_cnt = 0;
 	tp->is_cwnd_limited = 0;

@@ -400,6 +400,8 @@ static inline void tcp_dec_quickack_mode(struct sock *sk,
 #define	TCP_ECN_QUEUE_CWR	2
 #define	TCP_ECN_DEMAND_CWR	4
 #define	TCP_ECN_SEEN		8
+#define	TCP_ECN_ECT_PERMANENT	16
+#define	TCP_ECN_LOW		32
 
 enum tcp_tw_status {
 	TCP_TW_SUCCESS = 0,
@@ -802,10 +804,11 @@ struct tcp_skb_cb {
 			      unused:1;
 			/* pkts S/ACKed so far upon tx of skb, incl retrans: */
 			__u32 delivered;
+			__u32 lost;
 			/* start of send pipeline phase */
-			struct skb_mstamp first_tx_mstamp;
+			u32 first_tx_mstamp;
 			/* when we reached the "delivered" count */
-			struct skb_mstamp delivered_mstamp;
+			u32 delivered_mstamp;
 		} tx;   /* only used for outgoing skbs */
 		union {
 			struct inet_skb_parm	h4;
@@ -901,6 +904,8 @@ enum tcp_ca_ack_event_flags {
 #define TCP_CONG_NON_RESTRICTED 0x1
 /* Requires ECN/ECT set on all packets */
 #define TCP_CONG_NEEDS_ECN	0x2
+/* Require CE events from the stack */
+#define TCP_CONG_WANTS_CE_EVENTS 0x4
 
 union tcp_cc_info;
 
@@ -919,16 +924,27 @@ struct ack_sample {
  * A sample is invalid if "delivered" or "interval_us" is negative.
  */
 struct rate_sample {
-	struct	skb_mstamp prior_mstamp; /* starting timestamp for interval */
+	u32 prior_mstamp; /* starting timestamp for interval */
+	u32  prior_lost;        /* tp->lost at "prior_mstamp" */
 	u32  prior_delivered;	/* tp->delivered at "prior_mstamp" */
+	u32  prior_delivered_ce; /* tp->delivered_ce at "prior_mstamp" */
+	u32  tx_in_flight;      /* packets in flight at starting timestamp */
+	s32  lost;              /* number of packets lost over interval */
 	s32  delivered;		/* number of packets delivered over interval */
+	s32  delivered_ce;      /* packets delivered w/ CE mark over interval */
 	long interval_us;	/* time for tp->delivered to incr "delivered" */
+	u32 snd_interval_us;    /* snd interval for delivered packets */
+	u32 rcv_interval_us;    /* rcv interval for delivered packets */
 	long rtt_us;		/* RTT of last (S)ACKed packet (or -1) */
 	int  losses;		/* number of packets marked lost upon ACK */
 	u32  acked_sacked;	/* number of packets newly (S)ACKed upon ACK */
 	u32  prior_in_flight;	/* in flight before this ACK */
+	u32  last_end_seq;      /* end_seq of most recently ACKed packet */
 	bool is_app_limited;	/* is sample from packet with bubble in pipe? */
 	bool is_retrans;	/* is sample from retransmission? */
+	bool is_acking_tlp_retrans_seq;
+	bool is_ack_delayed;
+	bool is_ece;
 };
 
 struct tcp_congestion_ops {
@@ -955,6 +971,8 @@ struct tcp_congestion_ops {
 	u32  (*undo_cwnd)(struct sock *sk);
 	/* hook for packet ack accounting (optional) */
 	void (*pkts_acked)(struct sock *sk, const struct ack_sample *sample);
+	/* react to a specific lost skb (optional) */
+	void (*skb_marked_lost)(struct sock *sk, const struct sk_buff *skb);
 	/* suggest number of segments for each skb to transmit (optional) */
 	u32 (*tso_segs_goal)(struct sock *sk);
 	/* returns the multiplier used in tcp_sndbuf_expand (optional) */
@@ -1009,6 +1027,14 @@ static inline bool tcp_ca_needs_ecn(const struct sock *sk)
 	return icsk->icsk_ca_ops->flags & TCP_CONG_NEEDS_ECN;
 }
 
+static inline bool tcp_ca_wants_ce_events(const struct sock *sk)
+{
+	const struct inet_connection_sock *icsk = inet_csk(sk);
+
+	return icsk->icsk_ca_ops->flags & (TCP_CONG_NEEDS_ECN |
+					   TCP_CONG_WANTS_CE_EVENTS);
+}
+
 static inline void tcp_set_ca_state(struct sock *sk, const u8 ca_state)
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
@@ -1027,6 +1053,7 @@ static inline void tcp_ca_event(struct sock *sk, const enum tcp_ca_event event)
 }
 
 /* From tcp_rate.c */
+void tcp_set_tx_in_flight(struct sock *sk, struct sk_buff *skb);
 void tcp_rate_skb_sent(struct sock *sk, struct sk_buff *skb);
 void tcp_rate_skb_delivered(struct sock *sk, struct sk_buff *skb,
 			    struct rate_sample *rs);
