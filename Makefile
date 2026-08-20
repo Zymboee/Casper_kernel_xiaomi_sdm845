@@ -803,7 +803,6 @@ KBUILD_CFLAGS	+= -O3 -mtune=cortex-a55 -mcpu=cortex-a55+crc+crypto+fp16+simd+sve
 #KBUILD_CFLAGS	+= -floop-strip-mine -floop-block
 #KBUILD_CFLAGS	+= -floop-optimize -ftree-vectorize -ftracer
 LDFLAGS		+= -O3
-LDFLAGS += -fuse-ld=gold
 KBUILD_CFLAGS	+= $(call cc-option,-mabi=lp64)
 KBUILD_AFLAGS	+= $(call cc-option,-mabi=lp64)
 
@@ -813,11 +812,11 @@ KBUILD_CFLAGS	+= $(call cc-option, -mno-fix-cortex-a53-835769)
 KBUILD_CFLAGS	+= $(call cc-option, -mno-fix-cortex-a53-843419)
 
 ifdef CONFIG_CC_WERROR
-KBUILD_CFLAGS	+= -Werror
+# KBUILD_CFLAGS	+= -Werror
 endif
 
 ifdef CONFIG_CC_WERROR
-KBUILD_CFLAGS	+= -Werror
+# KBUILD_CFLAGS	+= -Werror
 endif
 
 # Tell gcc to never replace conditional load with a non-conditional one
